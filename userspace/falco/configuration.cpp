@@ -37,9 +37,11 @@ falco_configuration::falco_configuration():
 	m_json_include_tags_property(true),
 	m_notifications_rate(0),
 	m_notifications_max_burst(1000),
-	m_watch_config_files(true),
 	m_rule_matching(falco_common::rule_matching::FIRST),
+	m_watch_config_files(true),
 	m_buffered_outputs(false),
+	m_outputs_queue_capacity(DEFAULT_OUTPUTS_QUEUE_CAPACITY_UNBOUNDED_MAX_LONG_VALUE),
+	m_outputs_queue_recovery(falco_common::RECOVERY_EXIT),
 	m_time_format_iso_8601(false),
 	m_output_timeout(2000),
 	m_grpc_enabled(false),
@@ -194,6 +196,10 @@ void falco_configuration::load_yaml(const std::string& config_name, const yaml_h
 		bool insecure;
 		insecure = config.get_scalar<bool>("http_output.insecure", false);
 		http_output.options["insecure"] = insecure? std::string("true") : std::string("false");
+
+		bool echo;
+		echo = config.get_scalar<bool>("http_output.echo", false);
+		http_output.options["echo"] = echo? std::string("true") : std::string("false");
 		
 		std::string ca_cert;
 		ca_cert = config.get_scalar<std::string>("http_output.ca_cert", "");
@@ -206,6 +212,18 @@ void falco_configuration::load_yaml(const std::string& config_name, const yaml_h
 		std::string ca_path;
 		ca_path = config.get_scalar<std::string>("http_output.ca_path", "/etc/ssl/certs");
 		http_output.options["ca_path"] = ca_path;
+
+		bool mtls;
+		mtls = config.get_scalar<bool>("http_output.mtls", false);
+		http_output.options["mtls"] = mtls? std::string("true") : std::string("false");
+
+		std::string client_cert;
+		client_cert = config.get_scalar<std::string>("http_output.client_cert", "/etc/ssl/certs/client.crt");
+		http_output.options["client_cert"] = client_cert;
+
+		std::string client_key;
+		client_key = config.get_scalar<std::string>("http_output.client_key", "/etc/ssl/certs/client.key");
+		http_output.options["client_key"] = client_key;
 
 		m_outputs.push_back(http_output);
 	}
@@ -240,9 +258,16 @@ void falco_configuration::load_yaml(const std::string& config_name, const yaml_h
 		config.get_scalar<std::string>("libs_logger.severity", "debug"),
 		"[libs]: ");
 
+	falco_logger::log_stderr = config.get_scalar<bool>("log_stderr", false);
+	falco_logger::log_syslog = config.get_scalar<bool>("log_syslog", true);
+
 	m_output_timeout = config.get_scalar<uint32_t>("output_timeout", 2000);
 
 	m_notifications_rate = config.get_scalar<uint32_t>("outputs.rate", 0);
+	if(m_notifications_rate != 0)
+	{
+		falco_logger::log(LOG_WARNING, "'output.rate' config is deprecated and it will be removed in Falco 0.37\n");
+	}
 	m_notifications_max_burst = config.get_scalar<uint32_t>("outputs.max_burst", 1000);
 
 	std::string rule_matching = config.get_scalar<std::string>("rule_matching", "first");
@@ -258,10 +283,19 @@ void falco_configuration::load_yaml(const std::string& config_name, const yaml_h
 	}
 
 	m_buffered_outputs = config.get_scalar<bool>("buffered_outputs", false);
-	m_time_format_iso_8601 = config.get_scalar<bool>("time_format_iso_8601", false);
+	m_outputs_queue_capacity = config.get_scalar<size_t>("outputs_queue.capacity", DEFAULT_OUTPUTS_QUEUE_CAPACITY_UNBOUNDED_MAX_LONG_VALUE);
+	// We use 0 in falco.yaml to indicate an unbounded queue; equivalent to the largest long value 
+	if (m_outputs_queue_capacity == 0)
+	{
+		m_outputs_queue_capacity = DEFAULT_OUTPUTS_QUEUE_CAPACITY_UNBOUNDED_MAX_LONG_VALUE;
+	}
+	std::string recovery = config.get_scalar<std::string>("outputs_queue.recovery", "exit");
+	if (!falco_common::parse_queue_recovery(recovery, m_outputs_queue_recovery))
+	{
+		throw std::logic_error("Unknown recovery \"" + recovery + "\"--must be one of exit, continue, empty");
+	}
 
-	falco_logger::log_stderr = config.get_scalar<bool>("log_stderr", false);
-	falco_logger::log_syslog = config.get_scalar<bool>("log_syslog", true);
+	m_time_format_iso_8601 = config.get_scalar<bool>("time_format_iso_8601", false);
 
 	m_webserver_enabled = config.get_scalar<bool>("webserver.enabled", false);
 	m_webserver_threadiness = config.get_scalar<uint32_t>("webserver.threadiness", 0);

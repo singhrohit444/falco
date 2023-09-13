@@ -28,7 +28,7 @@ limitations under the License.
 #define THROW(cond, err, ctx)    { if ((cond)) { throw rule_loader::rule_load_exception(falco::load_result::LOAD_ERR_VALIDATE, (err), (ctx)); } }
 
 static std::string s_container_info_fmt = "%container.info";
-static std::string s_default_extra_fmt  = "%container.name (id=%container.id)";
+static std::string s_default_extra_fmt  = "container_id=%container.id container_name=%container.name";
 
 using namespace libsinsp::filter;
 
@@ -375,6 +375,12 @@ void rule_loader::compiler::compile_macros_infos(
 	}
 }
 
+static bool err_is_unknown_type_or_field(const std::string& err)
+{
+	return err.find("nonexistent field") != std::string::npos
+		|| err.find("invalid formatting token") != std::string::npos
+		|| err.find("unknown event type") != std::string::npos;
+}
 
 void rule_loader::compiler::compile_rule_infos(
 		configuration& cfg,
@@ -388,17 +394,22 @@ void rule_loader::compiler::compile_rule_infos(
 	filter_warning_resolver warn_resolver;
 	for (auto &r : col.rules())
 	{
+		// skip the rule if it has an unknown source
+		if (r.unknown_source)
+		{
+			continue;
+		}
+
 		// skip the rule if below the minimum priority
 		if (r.priority > cfg.min_priority)
 		{
 			continue;
 		}
 
+		// note: this should not be nullptr if the source is not unknown
 		auto source = cfg.sources.at(r.source);
-		// note: this is not supposed to happen
-
 		THROW(!source,
-		      std::string("Unknown source ") + r.source,
+		      std::string("Unknown source at compile-time") + r.source,
 		      r.ctx);
 
 		// build filter AST by parsing the condition, building exceptions,
@@ -433,6 +444,14 @@ void rule_loader::compiler::compile_rule_infos(
 
 		if(!is_format_valid(*cfg.sources.at(r.source), rule.output, err))
 		{
+			if (err_is_unknown_type_or_field(err) && r.skip_if_unknown_filter)
+			{
+				cfg.res->add_warning(
+					falco::load_result::load_result::LOAD_UNKNOWN_FILTER,
+					err,
+					r.output_ctx);
+				continue;
+			}
 			throw rule_load_exception(
 				falco::load_result::load_result::LOAD_ERR_COMPILE_OUTPUT,
 				err,
@@ -463,25 +482,20 @@ void rule_loader::compiler::compile_rule_infos(
 			// skip_if_unknown_filter is true
 			std::string err = e.what();
 
-			if (err.find("nonexistent field") != std::string::npos &&
-			    r.skip_if_unknown_filter)
+			if (err_is_unknown_type_or_field(err) && r.skip_if_unknown_filter)
 			{
 				cfg.res->add_warning(
-					falco::load_result::load_result::LOAD_UNKNOWN_FIELD,
-					e.what(),
+					falco::load_result::load_result::LOAD_UNKNOWN_FILTER,
+					err,
 					r.cond_ctx);
+				continue;
 			}
-			else
-			{
-				rule_loader::context ctx(compiler.get_pos(),
-							 condition,
-							 r.cond_ctx);
 
-				throw rule_loader::rule_load_exception(
-					falco::load_result::load_result::LOAD_ERR_COMPILE_CONDITION,
-					e.what(),
-					ctx);
-			}
+			rule_loader::context ctx(compiler.get_pos(), condition, r.cond_ctx);
+			throw rule_loader::rule_load_exception(
+				falco::load_result::load_result::LOAD_ERR_COMPILE_CONDITION,
+				err,
+				ctx);
 		}
 
 		// By default rules are enabled/disabled for the default ruleset

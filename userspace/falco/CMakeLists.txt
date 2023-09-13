@@ -22,7 +22,7 @@ set(
   app/actions/helpers_inspector.cpp
   app/actions/configure_interesting_sets.cpp
   app/actions/create_signal_handlers.cpp
-  app/actions/daemonize.cpp
+  app/actions/pidfile.cpp
   app/actions/init_falco_engine.cpp
   app/actions/init_inspectors.cpp
   app/actions/init_clients.cpp
@@ -75,7 +75,6 @@ list(APPEND FALCO_INCLUDE_DIRECTORIES "${FALCO_EXTRA_INCLUDE_DIRS}")
 
 set(
   FALCO_DEPENDENCIES
-  b64
   cxxopts
 )
 

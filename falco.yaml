@@ -39,6 +39,8 @@
 #     json_include_tags_property
 #     buffered_outputs
 #     outputs (throttling)
+#     rule_matching
+#     outputs_queue
 # Falco outputs channels
 #     stdout_output
 #     syslog_output
@@ -134,6 +136,12 @@
 # By arranging the order of files and rules thoughtfully, you can ensure that
 # desired customizations and rule behaviors are prioritized and applied as
 # intended.
+# 
+# With Falco 0.36 and beyond, it's now possible to apply multiple rules that match 
+# the same event type, eliminating concerns about rule prioritization based on the 
+# "first match wins" principle. However, enabling the `all` matching option may result
+# in a performance penalty. We recommend carefully testing this alternative setting  
+# before deploying it in production. Read more under the `rule_matching` configuration.
 rules_file:
   - /etc/falco/falco_rules.yaml
   - /etc/falco/falco_rules.local.yaml
@@ -266,6 +274,9 @@ buffered_outputs: false
 
 # [Stable] `outputs`
 #
+# [DEPRECATED]
+# This config is deprecated and it will be removed in Falco 0.37
+#
 # A throttling mechanism, implemented as a token bucket, can be used to control
 # the rate of Falco outputs. Each event source has its own rate limiter,
 # ensuring that alerts from one source do not affect the throttling of others.
@@ -297,12 +308,46 @@ outputs:
 #  - `all`: Falco will continue checking conditions of rules even if a matching 
 #    one was already found
 #
-# Rules conditions are evaluated in the order they are defined in the rulesfiles.
+# Rules conditions are evaluated in the order they are defined in the rules files.
 # For this reason, when using `first` as value, only the first defined rule will 
 # trigger, possibly shadowing other rules.
 # In case `all` is used as value, rules still trigger in the order they were
 # defined.
+# 
+# Effectively, with this setting, it is now possible to apply multiple rules that match
+# the same event type. This eliminates concerns about rule prioritization based on the
+# "first match wins" principle. However, enabling the `all` matching option may result in
+# a performance penalty. We recommend carefully testing this alternative setting before
+# deploying it in production.
 rule_matching: first
+
+# [Experimental] `outputs_queue`
+#
+# Falco utilizes tbb::concurrent_bounded_queue for handling outputs, and this parameter
+# allows you to customize the queue capacity. Please refer to the official documentation:
+# https://oneapi-src.github.io/oneTBB/main/tbb_userguide/Concurrent_Queue_Classes.html.
+# On a healthy system with optimized Falco rules, the queue should not fill up.
+# If it does, it is most likely happening due to the entire event flow being too slow,
+# indicating that the server is under heavy load.
+# 
+# Lowering the number of items can prevent memory from steadily increasing until the OOM
+# killer stops the Falco process. We provide recovery actions to self-limit or self-kill
+# in order to handle this situation earlier, similar to how we expose the kernel buffer size
+# as a parameter. However, it will not address the root cause of the event pipe not keeping up.
+# 
+# `capacity`: the maximum number of items allowed in the queue is determined by this value. 
+# Setting the value to 0 (which is the default) is equivalent to keeping the queue unbounded. 
+# In other words, when this configuration is set to 0, the number of allowed items is effectively 
+# set to the largest possible long value, disabling this setting.
+# 
+# `recovery`: strategy to follow when the queue becomes filled up. It applies only when the
+# queue is bounded and there is still available system memory. In the case of an unbounded
+# queue, if the available memory on the system is consumed, the Falco process would be
+# OOM killed. The value `exit` is the default, `continue` does nothing special and `empty` 
+# empties the queue and then continues.
+outputs_queue:
+  capacity: 0
+  recovery: exit
 
 
 ##########################
@@ -359,6 +404,14 @@ http_output:
   # Path to a folder that will be used as the CA certificate store. CA certificate need to be
   # stored as indivitual PEM files in this directory.
   ca_path: "/etc/ssl/certs"
+  # Tell Falco to use mTLS
+  mtls: false
+  # Path to the client cert.
+  client_cert: "/etc/ssl/certs/client.crt"
+  # Path to the client key.
+  client_key: "/etc/ssl/certs/client.key"
+  # Whether to echo server answers to stdout
+  echo: false
 
 # [Stable] `program_output`
 #
@@ -613,7 +666,7 @@ syscall_event_drops:
   max_burst: 1
   simulate_drops: false
 
-# [Experimental] `metrics`
+# [Stable] `metrics`
 #
 # Generates "Falco internal: metrics snapshot" rule output when `priority=info` at minimum
 # By selecting `output_file`, equivalent JSON output will be appended to a file.
@@ -736,6 +789,8 @@ syscall_event_drops:
 metrics:
   enabled: false
   interval: 1h
+  # Typically, in production, you only use `output_rule` or `output_file`, but not both. 
+  # However, if you have a very unique use case, you can use both together.
   output_rule: true
   # output_file: /tmp/falco_stats.jsonl
   resource_utilization_enabled: true

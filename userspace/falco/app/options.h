@@ -42,7 +42,6 @@ public:
 	bool all_events;
 	sinsp_evt::param_fmt event_buffer_format;
 	std::vector<std::string> cri_socket_paths;
-	bool daemon;
 	bool disable_cri_async;
 	std::vector<std::string> disable_sources;
 	std::vector<std::string> disabled_rule_substrings;
@@ -70,8 +69,6 @@ public:
 	std::string pidfilename;
 	// Rules list as passed by the user, via cmdline option '-r'
 	std::list<std::string> rules_filenames;
-	std::string stats_output_file;
-	std::string stats_interval;
 	uint64_t snaplen;
 	bool print_support;
 	std::set<std::string> disabled_rule_tags;

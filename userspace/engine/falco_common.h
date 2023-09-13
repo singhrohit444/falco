@@ -22,6 +22,12 @@ limitations under the License.
 #include <sinsp.h>
 
 //
+// equivalent to an "unbounded queue" in TBB terms or largest long value
+// https://github.com/oneapi-src/oneTBB/blob/b2474bfc636937052d05daf8b3f4d6b76e20273a/include/oneapi/tbb/concurrent_queue.h#L554
+//
+#define DEFAULT_OUTPUTS_QUEUE_CAPACITY_UNBOUNDED_MAX_LONG_VALUE std::ptrdiff_t(~size_t(0) / 2)
+
+//
 // Most falco_* classes can throw exceptions. Unless directly related
 // to low-level failures like inability to open file, etc, they will
 // be of this type.
@@ -52,6 +58,13 @@ struct falco_exception : std::exception
 
 namespace falco_common
 {
+
+	enum outputs_queue_recovery_type {
+		RECOVERY_CONTINUE = 0,  /* outputs_queue_capacity recovery strategy of continuing on. */
+		RECOVERY_EXIT = 1,  /* outputs_queue_capacity recovery strategy of exiting, self OOM kill. */
+		RECOVERY_EMPTY = 2,  /* outputs_queue_capacity recovery strategy of emptying queue then continuing. */
+	};
+
 	const std::string syscall_source = sinsp_syscall_event_source_name;
 
 	// Same as numbers/indices into the above vector
@@ -69,6 +82,7 @@ namespace falco_common
 	
 	bool parse_priority(std::string v, priority_type& out);
 	priority_type parse_priority(std::string v);
+	bool parse_queue_recovery(std::string v, outputs_queue_recovery_type& out);
 	bool format_priority(priority_type v, std::string& out, bool shortfmt=false);
 	std::string format_priority(priority_type v, bool shortfmt=false);
 

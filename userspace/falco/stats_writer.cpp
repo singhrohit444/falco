@@ -32,6 +32,7 @@ limitations under the License.
 // overflows here. Threads calling stats_writer::handle() will just
 // check that this value changed since their last observation.
 static std::atomic<stats_writer::ticker_t> s_timer((stats_writer::ticker_t) 0);
+static timer_t s_timerid;
 
 static void timer_handler(int signum)
 {
@@ -51,14 +52,15 @@ bool stats_writer::init_ticker(uint32_t interval_msec, std::string &err)
 		return false;
 	}
 	
-	timer_t timerid;
 	struct sigevent sev = {};
 	/* Create the timer */
 	sev.sigev_notify = SIGEV_SIGNAL;
 	sev.sigev_signo = SIGALRM;
-	sev.sigev_value.sival_ptr = &timerid;
+	sev.sigev_value.sival_ptr = &s_timerid;
 #ifndef __EMSCRIPTEN__
-	if (timer_create(CLOCK_MONOTONIC, &sev, &timerid) == -1) {
+	// delete any previously set timer
+	timer_delete(s_timerid);
+	if (timer_create(CLOCK_MONOTONIC, &sev, &s_timerid) == -1) {
 		err = std::string("Could not create periodic timer: ") + strerror(errno);
 		return false;
 	}
@@ -68,7 +70,7 @@ bool stats_writer::init_ticker(uint32_t interval_msec, std::string &err)
 	timer.it_interval = timer.it_value;
 
 #ifndef __EMSCRIPTEN__
-	if (timer_settime(timerid, 0, &timer, NULL) == -1) {
+	if (timer_settime(s_timerid, 0, &timer, NULL) == -1) {
 		err = std::string("Could not set up periodic timer: ") + strerror(errno);
 		return false;
 	}
@@ -89,6 +91,11 @@ stats_writer::stats_writer(
 	m_config = config;
 	if (config->m_metrics_enabled)
 	{
+		/* m_outputs should always be initialized because we use it
+		 * to extract output-queue stats in both cases: rule output and file output.
+		 */
+		m_outputs = outputs;
+
 		if (!config->m_metrics_output_file.empty())
 		{
 			m_file_output.exceptions(std::ofstream::failbit | std::ofstream::badbit);
@@ -98,7 +105,6 @@ stats_writer::stats_writer(
 
 		if (config->m_metrics_stats_rule_enabled)
 		{
-			m_outputs = outputs;
 			m_initialized = true;
 		}
 	}
@@ -106,6 +112,9 @@ stats_writer::stats_writer(
 	if (m_initialized)
 	{
 #ifndef __EMSCRIPTEN__
+		// capacity and controls should not be relevant for stats outputs, adopt capacity
+		// for completeness, but do not implement config recovery strategies.
+		m_queue.set_capacity(config->m_outputs_queue_capacity);
 		m_worker = std::thread(&stats_writer::worker, this);
 #endif
 	}
@@ -122,6 +131,10 @@ stats_writer::~stats_writer()
 		{
 			m_file_output.close();
 		}
+		// delete timerID and reset timer
+#ifndef __EMSCRIPTEN__
+		timer_delete(s_timerid);
+#endif
 	}
 }
 
@@ -150,7 +163,6 @@ inline void stats_writer::push(const stats_writer::msg& m)
 void stats_writer::worker() noexcept
 {
 	stats_writer::msg m;
-	nlohmann::json jmsg;
 	bool use_outputs = m_config->m_metrics_stats_rule_enabled;
 	bool use_file = !m_config->m_metrics_output_file.empty();
 	auto tick = stats_writer::get_ticker();
@@ -189,6 +201,7 @@ void stats_writer::worker() noexcept
 
 				if (use_file)
 				{
+					nlohmann::json jmsg;
 					jmsg["sample"] = m_total_samples;
 					jmsg["output_fields"] = m.output_fields;
 					m_file_output << jmsg.dump() << std::endl;
@@ -228,6 +241,7 @@ void stats_writer::collector::get_metrics_output_fields_wrapper(
 	output_fields["falco.host_boot_ts"] = machine_info->boot_ts_epoch;
 	output_fields["falco.hostname"] = machine_info->hostname; /* Explicitly add hostname to log msg in case hostname rule output field is disabled. */
 	output_fields["falco.host_num_cpus"] = machine_info->num_cpus;
+	output_fields["falco.outputs_queue_num_drops"] = m_writer->m_outputs->get_outputs_queue_num_drops();
 
 	output_fields["evt.source"] = src;
 	for (size_t i = 0; i < sizeof(all_driver_engines) / sizeof(const char*); i++)

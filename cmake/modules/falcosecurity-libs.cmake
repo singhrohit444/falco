@@ -23,17 +23,25 @@ if(FALCOSECURITY_LIBS_SOURCE_DIR)
   set(FALCOSECURITY_LIBS_VERSION "0.0.0-local")
   message(STATUS "Using local version of falcosecurity/libs: '${FALCOSECURITY_LIBS_SOURCE_DIR}'")
 else()
+  # FALCOSECURITY_LIBS_REPO accepts a repository name (<org name>/<repo name>) alternative to the falcosecurity/libs repository.
+  # In case you want to test against a fork of falcosecurity/libs just pass the variable -
+  # ie., `cmake -DFALCOSECURITY_LIBS_REPO=<your-gh-handle>/libs ..` 
+  if (NOT FALCOSECURITY_LIBS_REPO)
+    set(FALCOSECURITY_LIBS_REPO "falcosecurity/libs")
+  endif()
+
   # FALCOSECURITY_LIBS_VERSION accepts a git reference (branch name, commit hash, or tag) to the falcosecurity/libs repository.
   # In case you want to test against another falcosecurity/libs version (or branch, or commit) just pass the variable -
   # ie., `cmake -DFALCOSECURITY_LIBS_VERSION=dev ..` 
   if(NOT FALCOSECURITY_LIBS_VERSION)
-    set(FALCOSECURITY_LIBS_VERSION "6caaa3c85d7c783b29cd32832f2552a4bd6cd739")
-    set(FALCOSECURITY_LIBS_CHECKSUM "SHA256=0e32682499355332561962174119520cd02c652a6b73040f17d3099eee7537ea")
+    set(FALCOSECURITY_LIBS_VERSION "0.13.0-rc1")
+    set(FALCOSECURITY_LIBS_CHECKSUM "SHA256=a75526b664bce2ba05912e056e48be39b0b1cb797b2055d107e55afbee2c8233")
   endif()
 
   # cd /path/to/build && cmake /path/to/source
   execute_process(COMMAND "${CMAKE_COMMAND}"
       -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
+      -DFALCOSECURITY_LIBS_REPO=${FALCOSECURITY_LIBS_REPO}
       -DFALCOSECURITY_LIBS_VERSION=${FALCOSECURITY_LIBS_VERSION}
       -DFALCOSECURITY_LIBS_CHECKSUM=${FALCOSECURITY_LIBS_CHECKSUM}
     ${FALCOSECURITY_LIBS_CMAKE_SOURCE_DIR} WORKING_DIRECTORY ${FALCOSECURITY_LIBS_CMAKE_WORKING_DIR})

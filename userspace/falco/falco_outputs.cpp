@@ -19,7 +19,6 @@ limitations under the License.
 #endif
 
 #include "falco_outputs.h"
-
 #include "config_falco.h"
 
 #include "formats.h"
@@ -47,6 +46,8 @@ falco_outputs::falco_outputs(
 	bool json_include_tags_property,
 	uint32_t timeout,
 	bool buffered,
+	size_t outputs_queue_capacity,
+	falco_common::outputs_queue_recovery_type outputs_queue_recovery,
 	bool time_format_iso_8601,
 	const std::string& hostname)
 {
@@ -64,7 +65,10 @@ falco_outputs::falco_outputs(
 	{
 		add_output(output);
 	}
+	m_outputs_queue_num_drops = {0};
+	m_outputs_queue_recovery = outputs_queue_recovery;
 #ifndef __EMSCRIPTEN__
+	m_queue.set_capacity(outputs_queue_capacity);
 	m_worker_thread = std::thread(&falco_outputs::worker, this);
 #endif
 }
@@ -116,8 +120,16 @@ void falco_outputs::add_output(falco::outputs::config oc)
 		throw falco_exception("Output not supported: " + oc.name);
 	}
 
-	oo->init(oc, m_buffered, m_hostname, m_json_output);
-	m_outputs.push_back(oo);
+	std::string init_err;
+	if (oo->init(oc, m_buffered, m_hostname, m_json_output, init_err))
+	{
+		m_outputs.push_back(oo);
+	}
+	else
+	{
+		falco_logger::log(LOG_ERR, "Failed to init output: " + init_err);
+		delete(oo);
+	}
 }
 
 void falco_outputs::handle_event(gen_event *evt, std::string &rule, std::string &source,
@@ -274,8 +286,29 @@ inline void falco_outputs::push(const ctrl_msg& cmsg)
 #ifndef __EMSCRIPTEN__
 	if (!m_queue.try_push(cmsg))
 	{
-		fprintf(stderr, "Fatal error: Output queue reached maximum capacity. Exiting.\n");
-		exit(EXIT_FAILURE);
+		switch (m_outputs_queue_recovery)
+		{
+		case falco_common::RECOVERY_EXIT:
+			throw falco_exception("Fatal error: Output queue out of memory. Exiting ...");
+		case falco_common::RECOVERY_EMPTY:
+			/* Print a log just the first time */
+			if(m_outputs_queue_num_drops.load() == 0)
+			{
+				falco_logger::log(LOG_ERR, "Output queue out of memory. Drop event plus events in queue due to emptying the queue; continue on ...");
+			}
+			m_outputs_queue_num_drops += m_queue.size() + 1;
+			m_queue.clear();
+			break;
+		case falco_common::RECOVERY_CONTINUE:
+			if(m_outputs_queue_num_drops.load() == 0)
+			{
+				falco_logger::log(LOG_ERR, "Output queue out of memory. Drop event and continue on ...");
+			}
+			m_outputs_queue_num_drops++;
+			break;
+		default:
+			throw falco_exception("Fatal error: strategy unknown. Exiting ...");
+		}
 	}
 #else
 	for (auto o : m_outputs)
@@ -338,4 +371,9 @@ inline void falco_outputs::process_msg(falco::outputs::abstract_output* o, const
 		default:
 			falco_logger::log(LOG_DEBUG, "Outputs worker received an unknown message type\n");
 	}
+}
+
+uint64_t falco_outputs::get_outputs_queue_num_drops()
+{
+	return m_outputs_queue_num_drops.load();
 }

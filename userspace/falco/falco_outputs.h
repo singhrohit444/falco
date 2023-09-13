@@ -48,6 +48,8 @@ public:
 		bool json_include_tags_property,
 		uint32_t timeout,
 		bool buffered,
+		size_t outputs_queue_capacity,
+		falco_common::outputs_queue_recovery_type outputs_queue_recovery,
 		bool time_format_iso_8601,
 		const std::string& hostname);
 
@@ -83,6 +85,12 @@ public:
 	*/
 	void reopen_outputs();
 
+	/*!
+		\brief Return the number of currently dropped events as a result of failed push attempts
+		into the outputs queue when using `continue` or `empty` recovery strategies.
+	*/
+	uint64_t get_outputs_queue_num_drops();
+
 private:
 	std::unique_ptr<falco_formats> m_formats;
 
@@ -112,6 +120,8 @@ private:
 	falco_outputs_cbq m_queue;
 #endif
 
+	falco_common::outputs_queue_recovery_type m_outputs_queue_recovery;
+	std::atomic<uint64_t> m_outputs_queue_num_drops;
 	std::thread m_worker_thread;
 	inline void push(const ctrl_msg& cmsg);
 	inline void push_ctrl(ctrl_msg_type cmt);
